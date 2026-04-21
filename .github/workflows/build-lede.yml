@@ -11,14 +11,14 @@ env:
   REPO_BRANCH: master
   CONFIG_FILE: .config
   FEEDS_CONF: feeds.conf.default
-  DIY1_SH: diy1.sh          # 首次自定义脚本（修改 feeds 源）
-  DIY2_SH: diy2.sh          # 再次加载配置时的自定义脚本（修改 .config）
+  DIY1_SH: diy1.sh                 # 首次配置脚本（修改 feeds 源）
+  DIY2_SH: diy2.sh                 # 二次配置脚本（修改 .config）
   TZ: Asia/Shanghai
   OPENWRT_NAME: "lede"
   UPLOAD_RELEASE: true
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # 强制使用 Node.js 24
 
 jobs:
   build:
@@ -69,7 +69,7 @@ jobs:
       - name: 克隆 OpenWrt 源码
         run: git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
 
-      # 6. 首次自定义配置：替换 feeds.conf.default 并执行 diy1.sh（用于修改 feeds 源）
+      # 6. 首次自定义配置：替换 feeds.conf.default 并执行 diy1.sh
       - name: 首次自定义配置（处理 feeds.conf.default 并执行 diy1.sh）
         run: |
           cd openwrt
@@ -134,26 +134,34 @@ jobs:
           name: bin_${{ env.OPENWRT_NAME }}_${{ env.DEVICE_NAME }}_${{ env.date1 }}
           path: openwrt/bin
 
-      # 14. 整理固件到 firmware 目录（复制配置文件、固件并重命名）
+      # 14. 整理固件到 firmware 目录（仅保留传统+EFI squashfs 固件，简化文件名）
       - name: 整理固件文件
         id: organize
         if: steps.compile.outcome == 'success'
         run: |
           mkdir -p firmware
+          # 复制配置文件（作为记录）
           cp -v ./openwrt/.config firmware/${{ env.date1 }}_${{ env.OPENWRT_NAME }}_${{ env.DEVICE_NAME }}.config
-          find openwrt/bin/targets/*/*/ -maxdepth 1 \
-            -name "config.buildinfo" \
-            -or -name "*squashfs-combined*" \
-            -or -name "*sysupgrade*" \
-            -or -name "*.bin" \
-            | xargs cp -t firmware/ || true
+          
+          # 查找所有 squashfs-combined 固件（包括传统和 EFI）
+          find openwrt/bin/targets/*/*/ -maxdepth 1 -type f -name "*squashfs-combined*" | while read file; do
+            # 判断启动类型
+            if echo "$file" | grep -q "efi"; then
+              boot_type="efi"
+            else
+              boot_type="combined"
+            fi
+            # 保留原始扩展名（如 .img, .img.gz）
+            ext="${file##*.}"
+            # 新文件名：日期_项目名_设备名_启动类型.扩展名
+            new_name="${{ env.date1 }}_${{ env.OPENWRT_NAME }}_${{ env.DEVICE_NAME }}_${boot_type}.${ext}"
+            cp "$file" "firmware/$new_name"
+          done
+          
           cd firmware
-          sudo apt-get install -y rename
-          rename -v 's/^/${{ env.date1 }}_${{ env.OPENWRT_NAME }}_${{ env.DEVICE_NAME }}_/' config.buildinfo 2>/dev/null || true
-          rename -v 's/^/${{ env.date1 }}_${{ env.OPENWRT_NAME }}_/' *squashfs-combined* 2>/dev/null || true
-          rename -v 's/^/${{ env.date1 }}_${{ env.OPENWRT_NAME }}_/' *.bin 2>/dev/null || true
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
+          ls -lh
 
       # 15. 上传固件到 Artifact
       - name: 上传固件到 Artifact
