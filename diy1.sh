@@ -25,8 +25,6 @@ echo "✅ 当前 feeds 配置："
 grep luci feeds.conf.default
 
 # ---------- 1. 修改默认 IP ----------
-# ... 其余原有代码 ...
-# ---------- 1. 修改默认 IP ----------
 sed -i 's/192.168.1.1/192.168.5.1/g' package/base-files/files/bin/config_generate
 echo "✅ IP 已修改为 192.168.5.1"
 
@@ -56,7 +54,7 @@ if [ -f "package/lean/default-settings/files/zzz-default-settings" ]; then
 fi
 
 
-# ---------- 8. 删除 LEDE 自带的插件 ----------
+# ---------- 6. 删除 LEDE 自带的插件 ----------
 echo "🗑️ 删除 LEDE 自带的插件..."
 rm -rf feeds/luci/themes/luci-theme-argon 2>/dev/null || true
 rm -rf package/lean/luci-theme-argon 2>/dev/null || true
@@ -73,7 +71,7 @@ rm -rf feeds/packages/net/lucky 2>/dev/null || true
 rm -rf package/feeds/packages/lucky 2>/dev/null || true
 echo "✅ LEDE 自带插件清理完成"
 
-# ---------- 9. 添加第三方插件 ----------
+# ---------- 7. 添加第三方插件 ----------
 echo "📦 添加第三方插件..."
 
 git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
