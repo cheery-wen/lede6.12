@@ -56,7 +56,7 @@ fi
 
 # ---------- 5. 自定义版本显示 ----------
 if [ -f "package/lean/default-settings/files/zzz-default-settings" ]; then
-    sed -i "s/LEDE /OpenWrt ($(TZ=UTC-8 date "+%Y.%m.%d"))compiled by cheery)/g" package/lean/default-settings/files/zzz-default-settings
+    sed -i "s/LEDE /OpenWrt ($(TZ=UTC-8 date "+%Y.%m.%d") compiled by cheery)/g" package/lean/default-settings/files/zzz-default-settings
     echo "✅ 版本信息已更新（compiled by cheery）"
 fi
 
