@@ -18,6 +18,8 @@ env:
   UPLOAD_RELEASE: true
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
+  CCACHE_DIR: ~/.ccache
+  CCACHE_MAXSIZE: 2G
 
 jobs:
   build:
@@ -57,7 +59,7 @@ jobs:
             libncurses5-dev libz-dev patch python3 unzip zlib1g-dev lib32gcc-s1 libc6-dev-i386 \
             subversion flex uglifyjs git-core gcc-multilib p7zip p7zip-full msmtp libssl-dev \
             texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool \
-            autopoint device-tree-compiler g++-multilib antlr3 gperf wget curl swig rsync
+            autopoint device-tree-compiler g++-multilib antlr3 gperf wget curl swig rsync ccache
           df -h
 
       - name: 克隆 Lean OpenWrt 源码
@@ -79,8 +81,17 @@ jobs:
         uses: actions/cache@v5
         with:
           path: openwrt/dl
-          key: dl-${{ github.ref }}-${{ github.run_id }}
-          restore-keys: dl-${{ github.ref }}-
+          key: dl-${{ github.ref }}
+          restore-keys: |
+            dl-${{ github.ref }}-
+            dl-
+
+      - name: 缓存 ccache
+        uses: actions/cache@v5
+        with:
+          path: ~/.ccache
+          key: ccache-${{ github.ref }}
+          restore-keys: ccache-
 
       - name: 再次加载自定义配置（复制 .config，执行 diy2.sh，make defconfig）
         run: |
@@ -92,9 +103,9 @@ jobs:
       - name: 下载源码包
         run: |
           cd openwrt
-          make download -j8
+          make download -j$(nproc)
           find dl -size -1024c -exec ls -l {} \; -exec rm -f {} \;
-          make download -j8 || make download -j1 V=s
+          make download -j$(nproc) || make download -j1 V=s
 
       - name: 编译固件
         id: compile
@@ -120,9 +131,10 @@ jobs:
         if: steps.compile.outcome == 'success'
         run: |
           mkdir -p firmware
-          first_file=$(find openwrt/bin/targets -name "*squashfs-combined*" -type f | head -1)
+          # 查找多种固件类型
+          first_file=$(find openwrt/bin/targets -type f \( -name "*sysupgrade*" -o -name "*factory*" -o -name "*combined*" \) | head -1)
           if [ -z "$first_file" ]; then
-            echo "ERROR: No squashfs-combined firmware found!"
+            echo "ERROR: No firmware found (sysupgrade/factory/combined)!"
             exit 1
           fi
           target_dir=$(dirname "$first_file")
@@ -131,30 +143,21 @@ jobs:
           device="${parent}_${child}"
           device=$(echo "$device" | sed 's/[^a-zA-Z0-9._-]/_/g')
           echo "DEVICE_NAME=$device" >> $GITHUB_ENV
-          
+
           cp -v ./openwrt/.config "firmware/${date1}_${OPENWRT_NAME}_${device}.config"
-          
-          find openwrt/bin/targets -maxdepth 4 -type f -name "*squashfs-combined*" | while read file; do
+
+          # 复制所有匹配的固件文件
+          find openwrt/bin/targets -type f \( -name "*sysupgrade*" -o -name "*factory*" -o -name "*combined*" \) | while read file; do
             base=$(basename "$file")
-            if echo "$base" | grep -q "efi"; then
-              boot_type="efi"
-            else
-              boot_type="combined"
-            fi
-            if [[ "$base" == *.img.gz ]]; then
-              ext="img.gz"
-            else
-              ext="${base##*.}"
-            fi
-            new_name="${date1}_${OPENWRT_NAME}_${device}_${boot_type}.${ext}"
-            cp "$file" "firmware/$new_name"
+            # 保留原始文件名，避免重命名冲突
+            cp "$file" "firmware/${date1}_${OPENWRT_NAME}_${device}_${base}"
           done
-          
+
           if [ -z "$(ls -A firmware)" ]; then
             echo "ERROR: No firmware files were copied!"
             exit 1
           fi
-          
+
           cd firmware
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
@@ -183,14 +186,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ env.date1 }}      # 使用精确到分钟的日期作为唯一 tag
-          name: ${{ env.date3 }}          # Release 标题仍显示日期
+          tag_name: ${{ env.date1 }}-${{ github.run_number }}
+          name: ${{ env.date3 }}
           body_path: release.txt
           files: ${{ env.FIRMWARE }}/*
           draft: false
           prerelease: false
-          # 注意：overwrite_files 参数默认 false，如需覆盖同名文件可设为 true
-          # overwrite_files: true
 
       - name: 编译后深度清理
         if: always()
