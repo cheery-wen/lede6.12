@@ -110,6 +110,7 @@ jobs:
       - name: 编译固件
         id: compile
         run: |
+          export PATH="/usr/lib/ccache:$PATH"
           cd openwrt
           echo -e "$(nproc) thread compile"
           make -j$(nproc) || make -j1 || make -j1 V=s
@@ -149,7 +150,6 @@ jobs:
           # 复制所有匹配的固件文件
           find openwrt/bin/targets -type f \( -name "*sysupgrade*" -o -name "*factory*" -o -name "*combined*" \) | while read file; do
             base=$(basename "$file")
-            # 保留原始文件名，避免重命名冲突
             cp "$file" "firmware/${date1}_${OPENWRT_NAME}_${device}_${base}"
           done
 
