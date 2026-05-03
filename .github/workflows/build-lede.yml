@@ -93,9 +93,7 @@ jobs:
         run: |
           cd openwrt
           make download -j8
-          # 删除下载不完整的文件（小于1KB）
           find dl -size -1024c -exec ls -l {} \; -exec rm -f {} \;
-          # 重试一次完整下载
           make download -j8 || make download -j1 V=s
 
       - name: 编译固件
@@ -122,25 +120,20 @@ jobs:
         if: steps.compile.outcome == 'success'
         run: |
           mkdir -p firmware
-          # 查找任意 squashfs-combined 固件文件所在目录
           first_file=$(find openwrt/bin/targets -name "*squashfs-combined*" -type f | head -1)
           if [ -z "$first_file" ]; then
             echo "ERROR: No squashfs-combined firmware found!"
             exit 1
           fi
           target_dir=$(dirname "$first_file")
-          # 提取设备名：最后两级目录拼接，例如 x86/64 -> x86_64
           parent=$(basename "$(dirname "$target_dir")")
           child=$(basename "$target_dir")
           device="${parent}_${child}"
-          # 清洗非法字符，只保留字母数字、点、横线、下划线
           device=$(echo "$device" | sed 's/[^a-zA-Z0-9._-]/_/g')
           echo "DEVICE_NAME=$device" >> $GITHUB_ENV
           
-          # 复制配置文件
           cp -v ./openwrt/.config "firmware/${date1}_${OPENWRT_NAME}_${device}.config"
           
-          # 复制所有 squashfs-combined 固件，并根据启动类型命名
           find openwrt/bin/targets -maxdepth 4 -type f -name "*squashfs-combined*" | while read file; do
             base=$(basename "$file")
             if echo "$base" | grep -q "efi"; then
@@ -157,7 +150,6 @@ jobs:
             cp "$file" "firmware/$new_name"
           done
           
-          # 检查是否至少有一个固件文件被复制
           if [ -z "$(ls -A firmware)" ]; then
             echo "ERROR: No firmware files were copied!"
             exit 1
@@ -191,13 +183,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ env.date2 }}
-          name: ${{ env.date3 }}
+          tag_name: ${{ env.date1 }}      # 使用精确到分钟的日期作为唯一 tag
+          name: ${{ env.date3 }}          # Release 标题仍显示日期
           body_path: release.txt
           files: ${{ env.FIRMWARE }}/*
           draft: false
           prerelease: false
-          allow_updates: true    # 允许同一天多次运行覆盖 Release
+          # 注意：overwrite_files 参数默认 false，如需覆盖同名文件可设为 true
+          # overwrite_files: true
 
       - name: 编译后深度清理
         if: always()
