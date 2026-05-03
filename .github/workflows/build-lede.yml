@@ -18,7 +18,6 @@ env:
   UPLOAD_RELEASE: true
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -31,12 +30,12 @@ jobs:
       - name: 释放系统最大可用空间
         run: |
           sudo apt-get clean
-          docker system prune -af
+          docker system prune -af || true
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/local/lib/android \
             /usr/local/lib/node_modules /opt/hostedtoolcache /usr/local/.ghcup /usr/local/.cargo \
             /usr/local/lib/python3.* /usr/local/aws-sam-cli /usr/local/aws-cli /usr/local/julia* \
             /usr/share/swift /usr/share/miniconda /usr/share/az* /usr/share/kotlinc /opt/microsoft \
-            /opt/google /var/lib/gems /opt/pipx /opt/amazon
+            /opt/google /var/lib/gems /opt/pipx /opt/amazon || true
           df -h
 
       - name: 检出仓库代码
@@ -76,15 +75,12 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: 缓存 dl、staging_dir、build_dir
+      - name: 缓存 dl 目录
         uses: actions/cache@v5
         with:
-          path: |
-            openwrt/dl
-            openwrt/staging_dir
-            openwrt/build_dir
-          key: openwrt-${{ github.ref }}-${{ github.run_id }}
-          restore-keys: openwrt-${{ github.ref }}-
+          path: openwrt/dl
+          key: dl-${{ github.ref }}-${{ github.run_id }}
+          restore-keys: dl-${{ github.ref }}-
 
       - name: 再次加载自定义配置（复制 .config，执行 diy2.sh，make defconfig）
         run: |
@@ -97,7 +93,9 @@ jobs:
         run: |
           cd openwrt
           make download -j8
-          find dl -size -1024c -exec ls -l {} \;
+          # 删除下载不完整的文件（小于1KB）
+          find dl -size -1024c -exec ls -l {} \; -exec rm -f {} \;
+          # 重试一次完整下载
           make download -j8 || make download -j1 V=s
 
       - name: 编译固件
@@ -119,41 +117,30 @@ jobs:
           name: bin_${{ env.OPENWRT_NAME }}_${{ env.date1 }}
           path: openwrt/bin
 
-      - name: 整理固件文件（从目录路径提取设备名，如 x86/64 -> x86_64）
+      - name: 整理固件文件（提取设备名并复制固件）
         id: organize
         if: steps.compile.outcome == 'success'
         run: |
           mkdir -p firmware
-          # 查找固件所在目录（通常为 bin/targets/xxx/yyy）
-          target_dir=$(find openwrt/bin/targets -type d -name "squashfs-combined*" | head -1 | xargs dirname 2>/dev/null || true)
-          if [ -z "$target_dir" ]; then
-            # 备用：查找任意 squashfs-combined 文件所在目录
-            target_dir=$(find openwrt/bin/targets -name "*squashfs-combined*" -type f | head -1 | xargs dirname 2>/dev/null || true)
+          # 查找任意 squashfs-combined 固件文件所在目录
+          first_file=$(find openwrt/bin/targets -name "*squashfs-combined*" -type f | head -1)
+          if [ -z "$first_file" ]; then
+            echo "ERROR: No squashfs-combined firmware found!"
+            exit 1
           fi
-          if [ -n "$target_dir" ]; then
-            # 从路径中提取设备名，例如 .../x86/64 -> x86_64
-            device=$(basename "$target_dir")_$(basename "$(dirname "$target_dir")") | sed 's/_/ /' | awk '{print $2"_"$1}')  # 简单处理：取最后两级目录并反转顺序
-            # 更可靠的方法：直接用 sed 替换
-            device=$(echo "$target_dir" | sed -r 's/.*\/([^\/]+)\/([^\/]+)$/\2_\1/')
-          else
-            device="unknown"
-          fi
-          # 如果提取结果为空或格式不对，回退到从文件名提取
-          if [ -z "$device" ] || [ "$device" = "unknown" ]; then
-            # 取第一个固件文件的基础名
-            first_file=$(find openwrt/bin/targets -name "*squashfs-combined*" -type f | head -1)
-            if [ -n "$first_file" ]; then
-              base=$(basename "$first_file")
-              device=$(echo "$base" | sed -r 's/-squashfs-combined.*//')
-            fi
-          fi
-          [ -z "$device" ] && device="unknown"
+          target_dir=$(dirname "$first_file")
+          # 提取设备名：最后两级目录拼接，例如 x86/64 -> x86_64
+          parent=$(basename "$(dirname "$target_dir")")
+          child=$(basename "$target_dir")
+          device="${parent}_${child}"
+          # 清洗非法字符，只保留字母数字、点、横线、下划线
+          device=$(echo "$device" | sed 's/[^a-zA-Z0-9._-]/_/g')
           echo "DEVICE_NAME=$device" >> $GITHUB_ENV
           
           # 复制配置文件
-          cp -v ./openwrt/.config firmware/${{ env.date1 }}_${{ env.OPENWRT_NAME }}_${device}.config
+          cp -v ./openwrt/.config "firmware/${date1}_${OPENWRT_NAME}_${device}.config"
           
-          # 查找并复制所有 squashfs-combined 固件
+          # 复制所有 squashfs-combined 固件，并根据启动类型命名
           find openwrt/bin/targets -maxdepth 4 -type f -name "*squashfs-combined*" | while read file; do
             base=$(basename "$file")
             if echo "$base" | grep -q "efi"; then
@@ -166,9 +153,15 @@ jobs:
             else
               ext="${base##*.}"
             fi
-            new_name="${{ env.date1 }}_${{ env.OPENWRT_NAME }}_${device}_${boot_type}.${ext}"
+            new_name="${date1}_${OPENWRT_NAME}_${device}_${boot_type}.${ext}"
             cp "$file" "firmware/$new_name"
           done
+          
+          # 检查是否至少有一个固件文件被复制
+          if [ -z "$(ls -A firmware)" ]; then
+            echo "ERROR: No firmware files were copied!"
+            exit 1
+          fi
           
           cd firmware
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
@@ -204,6 +197,7 @@ jobs:
           files: ${{ env.FIRMWARE }}/*
           draft: false
           prerelease: false
+          allow_updates: true    # 允许同一天多次运行覆盖 Release
 
       - name: 编译后深度清理
         if: always()
