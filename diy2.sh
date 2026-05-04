@@ -1,57 +1,47 @@
 #!/bin/bash
 
-# ========== 1. 自适应网络端口检测（修复首页端口显示） ==========
-echo "正在注入自适应网络端口检测脚本..."
+# ========== 1. 自适应网络端口检测（通过修改 board.d 实现） ==========
+echo "正在注入自适应网络端口配置..."
 
-cat > package/base-files/files/etc/uci-defaults/99-fix-net-ports << "EOF"
+# 1.1 直接修改板级文件（x86架构）
+BOARD_D_PATH="target/linux/x86/base-files/etc/board.d"
+mkdir -p "$BOARD_D_PATH"
+
+cat > "$BOARD_D_PATH/02_network" << "EOF"
 #!/bin/sh
-
-# 等待驱动完全加载（避免 eth1/2/3 尚未出现）
-sleep 5
-
-# 1. 自动生成 /etc/board.json
-/bin/board_detect
-
-# 2. 确保配置文件和目录可写
-CONFIG_FILE="/etc/config/network"
-BOARD_JSON="/etc/board.json"
-BOARD_D_DIR="/etc/board.d"
-
-# 3. 等待系统就绪
-sleep 2
-
-# 4. 获取所有以太网接口 (排除虚拟和特殊设备)
-ALL_ETH=$(ls /sys/class/net/ | grep -E '^eth[0-9]+$' | sort -V)
-
-# 如果没找到任何接口，则退出
-[ -z "$ALL_ETH" ] && exit 0
-
-# 5. 动态构建新的 board.json 'network' 部分
-WAN_PORT=$(echo "$ALL_ETH" | head -n 1)
-LAN_PORTS=$(echo "$ALL_ETH" | tail -n +2 | tr '\n' ', ' | sed 's/, $//')
-
-# 6. 调用官方函数库生成配置
+. /lib/functions.sh
 . /lib/functions/uci-defaults.sh
+
 board_config_update
 
-# 7. 使用官方函数定义接口
-ucidef_set_interface_lan "$LAN_PORTS"
-ucidef_set_interface_wan "$WAN_PORT"
+# 获取所有物理以太网接口（排除虚拟设备）
+ALL_ETH=$(ls /sys/class/net/ | grep -E '^eth[0-9]+$' | grep -v '@' | sort -V)
+COUNT=$(echo "$ALL_ETH" | wc -l)
 
-# 8. 更新 board.json
+if [ "$COUNT" -ge 2 ]; then
+    WAN_PORT=$(echo "$ALL_ETH" | head -n1)
+    LAN_PORTS=$(echo "$ALL_ETH" | tail -n +2 | tr '\n' ' ' | sed 's/ $//')
+    ucidef_set_interfaces_lan_wan "$LAN_PORTS" "$WAN_PORT"
+elif [ "$COUNT" -eq 1 ]; then
+    ucidef_set_interface_lan "$ALL_ETH"
+fi
+
 board_config_flush
-
-# 9. 重新生成网络配置文件 /etc/config/network
-/bin/config_generate
-
-# 10. 重启网络服务
-/etc/init.d/network restart
-
 exit 0
 EOF
 
-chmod +x package/base-files/files/etc/uci-defaults/99-fix-net-ports
-echo "✅ 自适应网络端口检测脚本已添加"
+chmod +x "$BOARD_D_PATH/02_network"
+echo "✅ 板级文件 02_network 已注入"
+
+# 1.2 强制确保 board_detect 在首次启动时执行（兜底）
+mkdir -p package/base-files/files/etc/uci-defaults
+cat > package/base-files/files/etc/uci-defaults/99-force-board-detect << "EOF"
+#!/bin/sh
+/bin/board_detect
+exit 0
+EOF
+chmod +x package/base-files/files/etc/uci-defaults/99-force-board-detect
+echo "✅ 强制 board_detect 兜底脚本已添加"
 
 # ========== 2. 清理 Go 模块缓存 ==========
 echo "🗑️ 清理 Go 模块缓存..."
