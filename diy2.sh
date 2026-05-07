@@ -59,17 +59,4 @@ if [ -f "feeds/luci/collections/luci/Makefile" ]; then
     echo "✅ 默认主题已设置为 Argon"
 fi
 
-"========================================="
- echo "LEDE DIY 2 开始配置 APK+Firewall4"
- echo "========================================="
- # 1. 全局启用 Alpine APK 模式
- echo "CONFIG_USE_APK=y" >> .config
- # 2. 彻底禁用 opkg 全套
- sed -i 's/^CONFIG_PACKAGE_opkg=.*/CONFIG_PACKAGE_opkg=n/' .config
- sed -i 's/^CONFIG_PACKAGE_libopkg=.*/CONFIG_PACKAGE_libopkg=n/' .config
- sed -i 's/^CONFIG_PACKAGE_opkg-static=.*/CONFIG_PACKAGE_opkg-static=n/' .config
- # 3. 启用 apk 工具 + LuCI 网页包管理
- echo "CONFIG_PACKAGE_apk-tools=y" >> .config
- echo "CONFIG_PACKAGE_luci-app-apk=y" >> .config
-echo "✅ APK包管理器配置注入完成"
 echo "✅ diy2.sh 执行完成"
